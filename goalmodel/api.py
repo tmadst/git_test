@@ -8,14 +8,27 @@ import time
 
 import requests
 
-from .config import API_BASE
+from .config import API_BASE, ROOT
 
-try:
-    from dotenv import load_dotenv
 
-    load_dotenv()
-except ImportError:
-    pass
+def _load_env():
+    """Read KEY=value lines from .env (or .env.txt, which Notepad tends to
+    create) into os.environ. No python-dotenv needed; tolerates Notepad's BOM."""
+    for name in (".env", ".env.txt"):
+        path = ROOT / name
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        return path
+    return None
+
+
+_ENV_FILE = _load_env()
 
 
 class ApiClient:
@@ -23,8 +36,13 @@ class ApiClient:
         self.con = con
         self.session = requests.Session()
         key = api_key or os.environ.get("BETTINGISCOOL_API_KEY")
-        if key:
+        if key and key != "your-key-here":
             self.session.headers["X-API-Key"] = key
+        elif not os.environ.get("HTTPS_PROXY"):  # (cloud sandbox injects the key)
+            where = _ENV_FILE or ROOT / ".env"
+            raise RuntimeError(
+                f"Ingen API-nøgle fundet. Skriv BETTINGISCOOL_API_KEY=<din nøgle> i {where}"
+            )
 
     def get(self, path, **params):
         params = {k: v for k, v in params.items() if v is not None}
@@ -33,8 +51,8 @@ class ApiClient:
             if res.status_code != 429:
                 break
             time.sleep(0.5 * 2**attempt)
-        if res.status_code == 403:
-            raise RuntimeError("API key rejected (403) — check BETTINGISCOOL_API_KEY in .env")
+        if res.status_code in (401, 403):
+            raise RuntimeError(f"API-nøglen blev afvist ({res.status_code}) — tjek BETTINGISCOOL_API_KEY i .env")
         res.raise_for_status()
         data = res.json()
         rows = len(data) if isinstance(data, list) else 0
