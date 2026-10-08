@@ -1,0 +1,40 @@
+"""Pull new Pinnacle data into data/goalmodel.duckdb and refit match xG.
+
+    python update.py              # La Liga
+    python update.py --days 3     # snapshots only for games within 3 days
+
+Cheap to run often: finished matches are fetched once, fixtures once per run,
+and only upcoming games get a fresh odds snapshot.
+"""
+import argparse
+
+from goalmodel import ingest, xg_fit
+from goalmodel.api import ApiClient
+from goalmodel.config import LEAGUES
+from goalmodel.db import connect
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--league", default="laliga", choices=sorted(LEAGUES))
+    ap.add_argument("--days", type=int, default=7, help="snapshot games within N days")
+    args = ap.parse_args()
+
+    con = connect()
+    api = ApiClient(con)
+    league_id = LEAGUES[args.league]
+    start = con.execute("SELECT coalesce(sum(tokens), 0) FROM api_log").fetchone()[0]
+
+    print("fixtures:", ingest.update_fixtures(con, api, league_id))
+    print("closing fetched:", ingest.update_closing(con, api, league_id))
+    print("snapshots with odds:", ingest.update_snapshots(con, api, league_id, args.days))
+    print("closing xG fitted:", xg_fit.fit_closing(con))
+    print("upcoming xG fitted:", xg_fit.fit_snapshots(con))
+
+    used = con.execute("SELECT coalesce(sum(tokens), 0) FROM api_log").fetchone()[0] - start
+    print(f"API tokens used this run: {used}")
+    con.close()
+
+
+if __name__ == "__main__":
+    main()
