@@ -1,0 +1,152 @@
+"""Pull Pinnacle data into the local DB, spending as few API tokens as possible.
+
+- fixtures: one call per league for the whole season window.
+- closing odds + final score: once per finished match, never re-fetched.
+- snapshots: latest pre-match odds for matches kicking off in the next N days
+  (appended, so you build your own line-movement history by running often).
+"""
+from datetime import datetime, timedelta, timezone
+
+import pandas as pd
+
+from .config import SEASON_START
+
+ODDS_COLS = ["odds1", "odds0", "odds2", "todds1", "todds0", "todds2", "max_win"]
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _bulk_insert(con, table, rows):
+    """INSERT OR REPLACE many rows at once (row-by-row inserts are slow in DuckDB)."""
+    if not rows:
+        return
+    df = pd.DataFrame(rows)
+    con.register("_bulk", df)
+    con.execute(f"INSERT OR REPLACE INTO {table} SELECT * FROM _bulk")
+    con.unregister("_bulk")
+
+
+def _line(v):
+    # Moneyline has no line; store 0 so it can sit in the primary key.
+    return 0.0 if v is None else float(v)
+
+
+def update_fixtures(con, api, league_id, days_ahead=21, since=SEASON_START):
+    rows = api.fixtures(league_id, since, _iso(_utcnow() + timedelta(days=days_ahead)))
+    now = _utcnow()
+    for r in rows:
+        if r.get("resulting_unit") not in (None, "Regular") or r.get("parent_id"):
+            continue  # corners / bookings / live child events
+        if "Games)" in r["runner_home"]:
+            continue  # "Home Teams (4 Games)" multi-match specials
+        con.execute(
+            "INSERT OR REPLACE INTO fixtures VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [r["event_id"], r["league_id"], r["league_name"], r["starts"],
+             r["runner_home"], r["runner_away"], now],
+        )
+    return len(rows)
+
+
+def update_closing(con, api, league_id):
+    """Closing odds + score for kicked-off matches we don't have yet."""
+    todo = con.execute(
+        """
+        SELECT f.event_id FROM fixtures f
+        WHERE f.league_id = ? AND f.starts < now() - INTERVAL 2 HOUR
+          AND NOT EXISTS (SELECT 1 FROM odds_closing c WHERE c.event_id = f.event_id)
+          AND NOT EXISTS (SELECT 1 FROM results r WHERE r.event_id = f.event_id)
+        ORDER BY f.starts
+        """,
+        [league_id],
+    ).fetchall()
+    fetched = 0
+    for (event_id,) in todo:
+        rows = api.closing(event_id)
+        uniq = {(r["period"], r["market"], _line(r["line"])): r for r in rows}
+        _bulk_insert(con, "odds_closing", [
+            [event_id, p, m, l, *[r.get(c) for c in ODDS_COLS], r["timestamp"]]
+            for (p, m, l), r in uniq.items()
+        ])
+        # The closing rows carry the score of their own period; full time = period 0.
+        scored = [r for r in rows if r["period"] == 0 and r.get("score_home") is not None]
+        if scored:
+            r = scored[0]
+            con.execute(
+                "INSERT OR REPLACE INTO results VALUES (?, 0, ?, ?, ?)",
+                [event_id, r.get("result_status"), r["score_home"], r["score_away"]],
+            )
+        else:
+            # Duplicate / never-priced event id: mark as seen so we don't pay again.
+            con.execute("INSERT OR REPLACE INTO results VALUES (?, 0, NULL, NULL, NULL)", [event_id])
+        fetched += 1
+    return fetched
+
+
+def update_snapshots(con, api, league_id, days_ahead=7):
+    todo = con.execute(
+        """
+        SELECT event_id FROM fixtures
+        WHERE league_id = ? AND starts > now() AND starts < now() + to_days(?)
+        ORDER BY starts
+        """,
+        [league_id, days_ahead],
+    ).fetchall()
+    now = _utcnow()
+    n = 0
+    for (event_id,) in todo:
+        rows = api.odds(event_id, period=0)
+        for r in rows:
+            con.execute(
+                "INSERT INTO odds_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [now, event_id, r["period"], r["market"], _line(r["line"]),
+                 *[r.get(c) for c in ODDS_COLS], r["timestamp"]],
+            )
+        n += bool(rows)
+    return n
+
+
+def update_specials(con, api, league_id):
+    """Specials closing + settlement for finished matches (one call per match),
+    then the pre-match history of each player prop (for opening prices)."""
+    todo = con.execute(
+        """
+        SELECT event_id FROM matches
+        WHERE league_id = ? AND score_home IS NOT NULL
+          AND starts < now() - INTERVAL 4 HOUR
+          AND event_id NOT IN (SELECT event_id FROM specials_fetched)
+        ORDER BY starts
+        """,
+        [league_id],
+    ).fetchall()
+    now = _utcnow()
+    for (event_id,) in todo:
+        rows = api.specials_closing(event_id)
+        uniq = {r["contestant_id"]: r for r in rows}
+        _bulk_insert(con, "specials_closing", [
+            [event_id, r["special_id"], r["special_name"], r.get("category"), r.get("bet_type"),
+             r["contestant_id"], r["contestant_name"], r.get("handicap"), r.get("odds"),
+             r.get("todds"), r.get("max_win"), r.get("timestamp"), r.get("contestant_outcome")]
+            for r in uniq.values()
+        ])
+        con.execute("INSERT OR REPLACE INTO specials_fetched VALUES (?, ?, ?)", [event_id, now, len(rows)])
+
+    props = con.execute(
+        """
+        SELECT DISTINCT special_id FROM specials_closing
+        WHERE category = 'Player Props'
+          AND special_id NOT IN (SELECT special_id FROM specials_history)
+        """
+    ).fetchall()
+    for (special_id,) in props:
+        uniq = {(r["contestant_line_id"], r["timestamp"]): r for r in api.special_history(special_id)}
+        _bulk_insert(con, "specials_history", [
+            [special_id, c, r.get("odds"), r.get("todds"), r.get("max_win"), ts]
+            for (c, ts), r in uniq.items()
+        ])
+    return len(todo), len(props)
