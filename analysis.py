@@ -80,3 +80,20 @@ for name, o in offered.items():
 
 # %% Tokenforbrug
 con.sql("SELECT date_trunc('day', called_at) AS day, count(*) AS calls, sum(tokens) AS tokens FROM api_log GROUP BY 1 ORDER BY 1").df()
+
+# %% Manuel indtastning: odds fra en skærm (fx Barcelona – Getafe)
+# fair_row(marked, linje, odds1, [odds0,] odds2): linje = hjemmeholdets handicap
+# for 'spread', total for 'totals'/'home_totals'/'away_totals'. Kvartlinjer: "2.5-3" = -2.75.
+from goalmodel.devig import fair_row
+from goalmodel.xg_fit import fit_match
+
+rows = [fair_row("moneyline", 0, 1.077, 14.970, 22.380)]
+for l, a, b in [(-3.0, 2.200, 1.699), (-2.75, 1.934, 1.934), (-2.5, 1.740, 2.140)]:
+    rows.append(fair_row("spread", l, a, b))
+for l, a, b in [(4.0, 2.090, 1.757), (3.75, 1.847, 2.020), (3.5, 1.666, 2.230)]:
+    rows.append(fair_row("totals", l, a, b))
+rows.append(fair_row("home_totals", 3.5, 2.120, 1.724))
+rows.append(fair_row("away_totals", 0.5, 2.250, 1.645))
+xg_h, xg_a, rmse, n = fit_match(rows)
+print(f"xG {xg_h:.2f} – {xg_a:.2f}")
+price_match(xg_h, xg_a, home_xi, away_xi)[["side", "player", "xg", "fair_anytime", "fair_first", "fair_2plus"]].round(2)
