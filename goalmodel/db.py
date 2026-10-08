@@ -81,6 +81,20 @@ CREATE TABLE IF NOT EXISTS players (
     PRIMARY KEY (player, team)
 );
 
+-- Player share of team xG, calibrated on Pinnacle props (goalmodel.calibrate).
+CREATE TABLE IF NOT EXISTS player_shares (
+    player VARCHAR,
+    team VARCHAR,
+    league_id INTEGER,
+    n INTEGER,              -- props used
+    share DOUBLE,           -- shrunk share of team xG (use this)
+    share_raw DOUBLE,
+    p_avg DOUBLE,
+    last_seen TIMESTAMP,
+    updated_at TIMESTAMP,
+    PRIMARY KEY (player, team)
+);
+
 CREATE TABLE IF NOT EXISTS lineups (
     event_id BIGINT,
     team VARCHAR,

@@ -41,8 +41,17 @@ og lukning, linjebevægelse/CLV og spillernes implicitte xG. Vælg liga med `LEA
 øverst i filen. Pinnacle lægger kun props op for få spillere (langt flere i
 Premier League end i La Liga), og specials-data findes fra ca. sept. 2025.
 
+## Kalibrering (`calibration.py`)
+Pinnacles "To Score"-priser → spillerens xG (inverse Poisson) → andel af
+holdets markeds-xG. Andelen er stabil fra kamp til kamp, og spillerens xG
+følger holdets xG 1:1 (elasticitet 0,98). Modellen prissætter derfor kendte
+spillere som `andel × hold-xG` (andelen trukket lidt mod liga-medianen, k = 1)
+— i leave-one-out-test 2,5 procentpoint fra Pinnacles pris, mod 5,3 for
+"spillerens faste gennemsnit". Andelene ligger i tabellen `player_shares` og
+opdateres af `update.py`; `with_shares()` sætter dem på en opstilling.
+
 ## Tabeller
-`fixtures`, `odds_closing`, `specials_closing`, `specials_history`, `odds_snapshots`, `results`, `match_xg`, `api_log`,
+`fixtures`, `odds_closing`, `specials_closing`, `specials_history`, `player_shares`, `odds_snapshots`, `results`, `match_xg`, `api_log`,
 samt `players` og `lineups` (til at udfylde selv: startere og målscorere —
 bruges til at kalibrere positionsandele, indskifterandel og afregne bets).
 Views: `matches` (dubletter fjernet — Pinnacle lister nogle kampe under to

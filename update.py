@@ -9,7 +9,7 @@ and only upcoming games get a fresh odds snapshot.
 """
 import argparse
 
-from goalmodel import ingest, xg_fit
+from goalmodel import calibrate, ingest, xg_fit
 from goalmodel.api import ApiClient
 from goalmodel.config import LEAGUES, SEASON_START
 from goalmodel.db import connect
@@ -37,6 +37,7 @@ def main():
     print("== xG")
     print("closing xG fitted:", xg_fit.fit_closing(con))
     print("upcoming xG fitted:", xg_fit.fit_snapshots(con))
+    print("player shares calibrated:", len(calibrate.update_shares(con)))
 
     used = con.execute("SELECT coalesce(sum(tokens), 0) FROM api_log").fetchone()[0] - start
     print(f"API tokens used this run: {used}")

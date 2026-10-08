@@ -8,7 +8,7 @@ import pandas as pd
 
 from goalmodel.config import LEAGUES
 from goalmodel.db import connect
-from goalmodel.goalscorer import back_ev, lay_ev, price_match
+from goalmodel.goalscorer import back_ev, lay_ev, price_match, with_shares
 
 con = connect()
 LEAGUE = "laliga"  # "laliga" eller "epl"
@@ -54,8 +54,9 @@ con.sql("""
 
 # %% Målscorer-priser for én kamp
 # Udfyld startopstillingerne (10 markspillere + evt. målmand) når holdene er ude.
-# Vægt pr. spiller: position (+ multiplier for fx en topscorer), ELLER
-# 'anytime_odds' = markedets anytime-pris (så bruges inverse Poisson).
+# Skriv spillernavne som Pinnacle staver dem (se calibration.py, celle 4).
+# Vægt pr. spiller: kalibreret andel (automatisk), position (+ multiplier),
+# ELLER 'anytime_odds' = markedets anytime-pris (så bruges inverse Poisson).
 match = upcoming.iloc[0]
 home_xi = [
     {"player": "Angriber A", "position": "FWD", "multiplier": 1.3},
@@ -71,6 +72,10 @@ home_xi = [
 ]
 away_xi = [{"player": f"Ude {p}{i}", "position": p} for i, p in enumerate(["FWD"] * 2 + ["MID"] * 4 + ["DEF"] * 4)]
 
+# Spillere i player_shares (kalibreret på Pinnacle) får deres andel af holdets xG
+# automatisk; resten deler det, der er tilbage, efter position.
+home_xi = with_shares(con, match.home, home_xi)
+away_xi = with_shares(con, match.away, away_xi)
 prices = price_match(match.xg_home, match.xg_away, home_xi, away_xi)
 print(f"{match.home} – {match.away}: xG {match.xg_home} – {match.xg_away}")
 prices[["side", "player", "xg", "fair_anytime", "fair_first", "fair_2plus", "fair_3plus"]].round(3)

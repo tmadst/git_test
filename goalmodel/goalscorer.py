@@ -32,20 +32,31 @@ def xg_from_anytime_odds(odds, margin=0.0):
 
 
 def price_team(team_xg, match_xg, players, sub_share=SUB_SHARE, og_share=OWN_GOAL_SHARE):
-    """players: DataFrame/list of dicts with `player` and either `weight`, or
-    `position` (+ optional `multiplier`), or `anytime_odds`."""
+    """players: DataFrame/list of dicts with `player` and one of
+      - `share`: calibrated share of team xG (goalmodel.calibrate) → xg = share × team xG
+      - `weight`, `anytime_odds`, or `position` (+ optional `multiplier`):
+        these players split whatever starter xG the `share` players leave."""
     df = pd.DataFrame(players).copy()
+    if "share" not in df:
+        df["share"] = np.nan
     if "weight" not in df:
-        if "anytime_odds" in df:
-            df["weight"] = df["anytime_odds"].map(xg_from_anytime_odds)
-        else:
-            mult = df["multiplier"].fillna(1.0) if "multiplier" in df else 1.0
-            df["weight"] = df["position"].map(POSITION_WEIGHT) * mult
+        df["weight"] = np.nan
+    if "anytime_odds" in df:
+        df["weight"] = df["weight"].fillna(df["anytime_odds"].map(xg_from_anytime_odds))
+    if "position" in df:
+        mult = df["multiplier"].fillna(1.0) if "multiplier" in df else 1.0
+        df["weight"] = df["weight"].fillna(df["position"].map(POSITION_WEIGHT) * mult)
     df["weight"] = df["weight"].clip(lower=0).fillna(0)
 
     starters_xg = team_xg * max(0.0, 1 - sub_share - og_share)
-    total = df["weight"].sum()
-    df["xg"] = starters_xg * df["weight"] / total if total > 0 else 0.0
+    fixed = df["share"].notna()
+    df["xg"] = df["share"] * team_xg
+    rest = starters_xg - df.loc[fixed, "xg"].sum()
+    if rest < 0:  # calibrated shares exceed the starters' pot: scale them down
+        df.loc[fixed, "xg"] *= starters_xg / df.loc[fixed, "xg"].sum()
+        rest = 0.0
+    total = df.loc[~fixed, "weight"].sum()
+    df.loc[~fixed, "xg"] = rest * df.loc[~fixed, "weight"] / total if total > 0 else 0.0
     p_goal = 1 - np.exp(-match_xg)
 
     df["p_anytime"] = poisson.sf(0, df["xg"])
@@ -54,7 +65,14 @@ def price_team(team_xg, match_xg, players, sub_share=SUB_SHARE, og_share=OWN_GOA
     df["p_first"] = df["xg"] / match_xg * p_goal
     for m in ("anytime", "2plus", "3plus", "first"):
         df[f"fair_{m}"] = 1 / df[f"p_{m}"]
-    return df.drop(columns="weight")
+    return df.drop(columns=["weight", "share"])
+
+
+def with_shares(con, team, players):
+    """Attach calibrated shares (player_shares table) to a lineup by name."""
+    shares = dict(con.execute(
+        "SELECT player, share FROM player_shares WHERE team = ?", [team]).fetchall())
+    return [{**p, "share": shares.get(p["player"], p.get("share"))} for p in players]
 
 
 def price_match(xg_home, xg_away, home_players, away_players, **kw):
