@@ -10,7 +10,7 @@ import argparse
 
 from goalmodel import ingest, xg_fit
 from goalmodel.api import ApiClient
-from goalmodel.config import LEAGUES
+from goalmodel.config import LEAGUES, SEASON_START
 from goalmodel.db import connect
 
 
@@ -18,6 +18,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--league", default="laliga", choices=sorted(LEAGUES))
     ap.add_argument("--days", type=int, default=7, help="snapshot games within N days")
+    ap.add_argument("--since", default=SEASON_START,
+                    help="fixtures from this date, e.g. 2025-08-01T00:00:00Z for last season too")
     args = ap.parse_args()
 
     con = connect()
@@ -25,9 +27,10 @@ def main():
     league_id = LEAGUES[args.league]
     start = con.execute("SELECT coalesce(sum(tokens), 0) FROM api_log").fetchone()[0]
 
-    print("fixtures:", ingest.update_fixtures(con, api, league_id))
+    print("fixtures:", ingest.update_fixtures(con, api, league_id, since=args.since))
     print("closing fetched:", ingest.update_closing(con, api, league_id))
     print("snapshots with odds:", ingest.update_snapshots(con, api, league_id, args.days))
+    print("specials (matches, player props):", ingest.update_specials(con, api, league_id))
     print("closing xG fitted:", xg_fit.fit_closing(con))
     print("upcoming xG fitted:", xg_fit.fit_snapshots(con))
 

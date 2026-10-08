@@ -25,12 +25,14 @@ def _line(v):
     return 0.0 if v is None else float(v)
 
 
-def update_fixtures(con, api, league_id, days_ahead=21):
-    rows = api.fixtures(league_id, SEASON_START, _iso(_utcnow() + timedelta(days=days_ahead)))
+def update_fixtures(con, api, league_id, days_ahead=21, since=SEASON_START):
+    rows = api.fixtures(league_id, since, _iso(_utcnow() + timedelta(days=days_ahead)))
     now = _utcnow()
     for r in rows:
         if r.get("resulting_unit") not in (None, "Regular") or r.get("parent_id"):
             continue  # corners / bookings / live child events
+        if "Games)" in r["runner_home"]:
+            continue  # "Home Teams (4 Games)" multi-match specials
         con.execute(
             "INSERT OR REPLACE INTO fixtures VALUES (?, ?, ?, ?, ?, ?, ?)",
             [r["event_id"], r["league_id"], r["league_name"], r["starts"],
@@ -96,3 +98,45 @@ def update_snapshots(con, api, league_id, days_ahead=7):
             )
         n += bool(rows)
     return n
+
+
+def update_specials(con, api, league_id):
+    """Specials closing + settlement for finished matches (one call per match),
+    then the pre-match history of each player prop (for opening prices)."""
+    todo = con.execute(
+        """
+        SELECT event_id FROM matches
+        WHERE league_id = ? AND score_home IS NOT NULL
+          AND starts < now() - INTERVAL 4 HOUR
+          AND event_id NOT IN (SELECT event_id FROM specials_fetched)
+        ORDER BY starts
+        """,
+        [league_id],
+    ).fetchall()
+    now = _utcnow()
+    for (event_id,) in todo:
+        rows = api.specials_closing(event_id)
+        for r in rows:
+            con.execute(
+                "INSERT OR REPLACE INTO specials_closing VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [event_id, r["special_id"], r["special_name"], r.get("category"), r.get("bet_type"),
+                 r["contestant_id"], r["contestant_name"], r.get("handicap"), r.get("odds"),
+                 r.get("todds"), r.get("max_win"), r.get("timestamp"), r.get("contestant_outcome")],
+            )
+        con.execute("INSERT OR REPLACE INTO specials_fetched VALUES (?, ?, ?)", [event_id, now, len(rows)])
+
+    props = con.execute(
+        """
+        SELECT DISTINCT special_id FROM specials_closing
+        WHERE category = 'Player Props'
+          AND special_id NOT IN (SELECT special_id FROM specials_history)
+        """
+    ).fetchall()
+    for (special_id,) in props:
+        for r in api.special_history(special_id):
+            con.execute(
+                "INSERT OR REPLACE INTO specials_history VALUES (?, ?, ?, ?, ?, ?)",
+                [special_id, r["contestant_line_id"], r.get("odds"), r.get("todds"),
+                 r.get("max_win"), r["timestamp"]],
+            )
+    return len(todo), len(props)

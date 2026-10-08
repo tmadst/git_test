@@ -91,6 +91,41 @@ CREATE TABLE IF NOT EXISTS lineups (
     PRIMARY KEY (event_id, player)
 );
 
+-- Closing price + settlement of every Pinnacle special (team & player props).
+-- outcome: W / L (others = refund/void).
+CREATE TABLE IF NOT EXISTS specials_closing (
+    event_id BIGINT,
+    special_id BIGINT,
+    special_name VARCHAR,
+    category VARCHAR,
+    bet_type VARCHAR,
+    contestant_id BIGINT,
+    contestant_name VARCHAR,
+    handicap DOUBLE,
+    odds DOUBLE,
+    todds DOUBLE,
+    max_win DOUBLE,
+    ts TIMESTAMP,
+    outcome VARCHAR,
+    PRIMARY KEY (event_id, contestant_id)
+);
+
+-- Which events we already asked for specials (so empty ones aren't re-paid).
+CREATE TABLE IF NOT EXISTS specials_fetched (
+    event_id BIGINT PRIMARY KEY, fetched_at TIMESTAMP, n_rows INTEGER
+);
+
+-- Full pre-match price history of player props (cheap: per special_id).
+CREATE TABLE IF NOT EXISTS specials_history (
+    special_id BIGINT,
+    contestant_id BIGINT,
+    odds DOUBLE,
+    todds DOUBLE,
+    max_win DOUBLE,
+    ts TIMESTAMP,
+    PRIMARY KEY (special_id, contestant_id, ts)
+);
+
 -- Matches with the duplicate (odds-less) event ids removed.
 CREATE OR REPLACE VIEW matches AS
 SELECT f.*, r.score_home, r.score_away

@@ -32,8 +32,15 @@ selv opbygger linjebevægelser over tid.
 
 Første målscorer = spillerens xG / kampens xG × P(mindst ét mål).
 
+## Backtest af Pinnacles målscorer-odds
+`python update.py --since 2025-08-01T00:00:00Z` henter også sidste sæson, og
+`backtest.py` (Positron-celler) måler Pinnacles "X To Score"-props:
+kalibrering (forventede vs. faktiske scorere), flad-ROI for Ja/Nej ved åbning
+og lukning, linjebevægelse/CLV og spillernes implicitte xG. Pinnacle lægger kun
+props op for få stjernespillere, og specials-data findes fra ca. feb. 2026.
+
 ## Tabeller
-`fixtures`, `odds_closing`, `odds_snapshots`, `results`, `match_xg`, `api_log`,
+`fixtures`, `odds_closing`, `specials_closing`, `specials_history`, `odds_snapshots`, `results`, `match_xg`, `api_log`,
 samt `players` og `lineups` (til at udfylde selv: startere og målscorere —
 bruges til at kalibrere positionsandele, indskifterandel og afregne bets).
 Views: `matches` (dubletter fjernet — Pinnacle lister nogle kampe under to

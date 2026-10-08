@@ -65,5 +65,12 @@ class ApiClient:
         """Closing line for every market + final score. Only after kickoff."""
         return self.get("/api/closing", event_id=event_id)
 
+    def specials_closing(self, event_id):
+        """Closing price + W/L outcome for every special on a match."""
+        return self.get("/api/specials/closing", event_id=event_id)
+
+    def special_history(self, special_id):
+        return self.get("/api/specials/odds", special_id=special_id, full_history=1)
+
     def results(self, event_id):
         return self.get("/api/results", event_id=event_id)
