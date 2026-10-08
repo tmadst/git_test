@@ -7,6 +7,8 @@
 """
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
+
 from .config import SEASON_START
 
 ODDS_COLS = ["odds1", "odds0", "odds2", "todds1", "todds0", "todds2", "max_win"]
@@ -18,6 +20,16 @@ def _utcnow():
 
 def _iso(dt):
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _bulk_insert(con, table, rows):
+    """INSERT OR REPLACE many rows at once (row-by-row inserts are slow in DuckDB)."""
+    if not rows:
+        return
+    df = pd.DataFrame(rows)
+    con.register("_bulk", df)
+    con.execute(f"INSERT OR REPLACE INTO {table} SELECT * FROM _bulk")
+    con.unregister("_bulk")
 
 
 def _line(v):
@@ -56,12 +68,11 @@ def update_closing(con, api, league_id):
     fetched = 0
     for (event_id,) in todo:
         rows = api.closing(event_id)
-        for r in rows:
-            con.execute(
-                "INSERT OR REPLACE INTO odds_closing VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [event_id, r["period"], r["market"], _line(r["line"]),
-                 *[r.get(c) for c in ODDS_COLS], r["timestamp"]],
-            )
+        uniq = {(r["period"], r["market"], _line(r["line"])): r for r in rows}
+        _bulk_insert(con, "odds_closing", [
+            [event_id, p, m, l, *[r.get(c) for c in ODDS_COLS], r["timestamp"]]
+            for (p, m, l), r in uniq.items()
+        ])
         # The closing rows carry the score of their own period; full time = period 0.
         scored = [r for r in rows if r["period"] == 0 and r.get("score_home") is not None]
         if scored:
@@ -116,13 +127,13 @@ def update_specials(con, api, league_id):
     now = _utcnow()
     for (event_id,) in todo:
         rows = api.specials_closing(event_id)
-        for r in rows:
-            con.execute(
-                "INSERT OR REPLACE INTO specials_closing VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [event_id, r["special_id"], r["special_name"], r.get("category"), r.get("bet_type"),
-                 r["contestant_id"], r["contestant_name"], r.get("handicap"), r.get("odds"),
-                 r.get("todds"), r.get("max_win"), r.get("timestamp"), r.get("contestant_outcome")],
-            )
+        uniq = {r["contestant_id"]: r for r in rows}
+        _bulk_insert(con, "specials_closing", [
+            [event_id, r["special_id"], r["special_name"], r.get("category"), r.get("bet_type"),
+             r["contestant_id"], r["contestant_name"], r.get("handicap"), r.get("odds"),
+             r.get("todds"), r.get("max_win"), r.get("timestamp"), r.get("contestant_outcome")]
+            for r in uniq.values()
+        ])
         con.execute("INSERT OR REPLACE INTO specials_fetched VALUES (?, ?, ?)", [event_id, now, len(rows)])
 
     props = con.execute(
@@ -133,10 +144,9 @@ def update_specials(con, api, league_id):
         """
     ).fetchall()
     for (special_id,) in props:
-        for r in api.special_history(special_id):
-            con.execute(
-                "INSERT OR REPLACE INTO specials_history VALUES (?, ?, ?, ?, ?, ?)",
-                [special_id, r["contestant_line_id"], r.get("odds"), r.get("todds"),
-                 r.get("max_win"), r["timestamp"]],
-            )
+        uniq = {(r["contestant_line_id"], r["timestamp"]): r for r in api.special_history(special_id)}
+        _bulk_insert(con, "specials_history", [
+            [special_id, c, r.get("odds"), r.get("todds"), r.get("max_win"), ts]
+            for (c, ts), r in uniq.items()
+        ])
     return len(todo), len(props)

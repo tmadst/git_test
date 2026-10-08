@@ -1,4 +1,4 @@
-# La Liga målscorer-model
+# Målscorer-model (La Liga + Premier League)
 
 Prissætter **anytime-, første-, 2+- og 3+-målscorer** ud fra Pinnacles odds,
 efter Bookie Bashing-metoden: start med kampens forventede mål (ikke spillerens
@@ -9,7 +9,8 @@ fordel resten mellem de 10 startende markspillere.
 1. Åbn mappen i Positron og vælg en Python 3.11+-fortolker (gerne et nyt venv).
 2. `pip install -r requirements.txt`
 3. Kopiér `.env.example` til `.env` og indsæt din `BETTINGISCOOL_API_KEY`.
-4. `python update.py` — henter data til `data/goalmodel.duckdb`.
+4. `python update.py` — henter data for alle ligaer til `data/goalmodel.duckdb`
+   (`--league laliga` / `--league epl` for kun én).
 5. Åbn `analysis.py` og kør cellerne (Ctrl/Cmd+Enter).
    Databasen kan også åbnes i Positrons **Connections**-panel (DuckDB).
 
@@ -36,8 +37,9 @@ Første målscorer = spillerens xG / kampens xG × P(mindst ét mål).
 `python update.py --since 2025-08-01T00:00:00Z` henter også sidste sæson, og
 `backtest.py` (Positron-celler) måler Pinnacles "X To Score"-props:
 kalibrering (forventede vs. faktiske scorere), flad-ROI for Ja/Nej ved åbning
-og lukning, linjebevægelse/CLV og spillernes implicitte xG. Pinnacle lægger kun
-props op for få stjernespillere, og specials-data findes fra ca. feb. 2026.
+og lukning, linjebevægelse/CLV og spillernes implicitte xG. Vælg liga med `LEAGUE`
+øverst i filen. Pinnacle lægger kun props op for få spillere (langt flere i
+Premier League end i La Liga), og specials-data findes fra ca. sept. 2025.
 
 ## Tabeller
 `fixtures`, `odds_closing`, `specials_closing`, `specials_history`, `odds_snapshots`, `results`, `match_xg`, `api_log`,

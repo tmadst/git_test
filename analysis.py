@@ -6,10 +6,13 @@
 # %%
 import pandas as pd
 
+from goalmodel.config import LEAGUES
 from goalmodel.db import connect
 from goalmodel.goalscorer import back_ev, lay_ev, price_match
 
 con = connect()
+LEAGUE = "laliga"  # "laliga" eller "epl"
+LEAGUE_ID = LEAGUES[LEAGUE]
 
 # %% Kommende kampe med markeds-xG (fra seneste Pinnacle-snapshot)
 upcoming = con.sql("""
@@ -17,18 +20,18 @@ upcoming = con.sql("""
            round(x.xg_home, 2) AS xg_home, round(x.xg_away, 2) AS xg_away,
            round(x.xg_home + x.xg_away, 2) AS xg_total, x.odds_ts
     FROM matches m JOIN match_xg x ON x.event_id = m.event_id AND x.source = 'snapshot'
-    WHERE m.starts > now()
+    WHERE m.starts > now() AND m.league_id = $lg
     ORDER BY m.starts
-""").df()
+""", params={"lg": LEAGUE_ID}).df()
 upcoming
 
 # %% Spillede kampe: lukke-xG mod resultat (kalibrering)
 played = con.sql("""
     SELECT m.starts, m.home, m.away, x.xg_home, x.xg_away, m.score_home, m.score_away
     FROM matches m JOIN match_xg x ON x.event_id = m.event_id AND x.source = 'closing'
-    WHERE m.score_home IS NOT NULL
+    WHERE m.score_home IS NOT NULL AND m.league_id = $lg
     ORDER BY m.starts
-""").df()
+""", params={"lg": LEAGUE_ID}).df()
 print(played[["xg_home", "xg_away", "score_home", "score_away"]].mean().round(2))
 played.tail(10)
 
@@ -36,16 +39,18 @@ played.tail(10)
 con.sql("""
     WITH t AS (
         SELECT home AS team, xg_home AS xg_for, xg_away AS xg_against, score_home AS gf, score_away AS ga
-        FROM matches JOIN match_xg USING (event_id) WHERE source = 'closing'
+        FROM matches JOIN match_xg USING (event_id)
+        WHERE source = 'closing' AND league_id = $lg AND starts >= '2026-08-01'
         UNION ALL
         SELECT away, xg_away, xg_home, score_away, score_home
-        FROM matches JOIN match_xg USING (event_id) WHERE source = 'closing'
+        FROM matches JOIN match_xg USING (event_id)
+        WHERE source = 'closing' AND league_id = $lg AND starts >= '2026-08-01'
     )
     SELECT team, count(*) AS games,
            round(avg(xg_for), 2) AS xg_for, round(avg(xg_against), 2) AS xg_against,
            round(avg(gf), 2) AS goals_for, round(avg(ga), 2) AS goals_against
     FROM t GROUP BY team ORDER BY xg_for DESC
-""").df()
+""", params={"lg": LEAGUE_ID}).df()
 
 # %% Målscorer-priser for én kamp
 # Udfyld startopstillingerne (10 markspillere + evt. målmand) når holdene er ude.

@@ -9,6 +9,7 @@ SOCCER = 29
 # Pinnacle league ids (GET /api/leagues?sport_id=29)
 LEAGUES = {
     "laliga": 2196,  # Spain - La Liga
+    "epl": 1980,  # England - Premier League
 }
 
 # 2026/27 season window

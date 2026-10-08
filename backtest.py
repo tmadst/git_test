@@ -7,9 +7,11 @@
 import numpy as np
 import pandas as pd
 
+from goalmodel.config import LEAGUES
 from goalmodel.db import connect
 
 con = connect()
+LEAGUE = "all"  # "all", "laliga" eller "epl"
 
 # One row per prop: Yes/No price at open (first posted) and close, plus result.
 props = con.sql("""
@@ -33,7 +35,7 @@ props = con.sql("""
                arg_min(odds, ts) AS open_odds, arg_min(todds, ts) AS open_fair, min(ts) AS open_ts
         FROM specials_history GROUP BY 1, 2
     )
-    SELECT m.starts, m.home, m.away, c.player, c.outcome,
+    SELECT m.league_name, m.starts, m.home, m.away, c.player, c.outcome,
            oy.open_odds AS open_yes, onn.open_odds AS open_no,
            oy.open_fair AS fair_open_yes, oy.open_ts,
            c.close_yes, c.close_no, c.fair_close_yes, c.fair_close_no, c.limit_close,
@@ -43,10 +45,11 @@ props = con.sql("""
     LEFT JOIN o oy  ON oy.special_id = c.special_id AND oy.contestant_id = c.yes_id
     LEFT JOIN o onn ON onn.special_id = c.special_id AND onn.contestant_id = c.no_id
     LEFT JOIN match_xg x ON x.event_id = c.event_id AND x.source = 'closing'
+    WHERE $lg = 0 OR m.league_id = $lg
     ORDER BY m.starts
-""").df()
+""", params={"lg": 0 if LEAGUE == "all" else LEAGUES[LEAGUE]}).df()
 
-props = props[props.outcome.isin(["W", "L"])].copy()  # drop voids / non-starters
+props = props[props.outcome.isin(["W", "L"]) & (props.fair_close_yes > 1.01)].copy()  # drop voids / non-starters
 props["scored"] = (props.outcome == "W").astype(int)
 props["p_close"] = 1 / props.fair_close_yes        # Pinnacle's fair P(score) at close
 props["p_open"] = 1 / props.fair_open_yes
